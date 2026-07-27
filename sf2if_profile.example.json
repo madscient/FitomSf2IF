@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "FitomSf2IF プロファイル設定ファイル。",
+    "sf2if_profile.json という名前でカレントディレクトリに置くか、",
+    "環境変数 SF2IF_PROFILE にパスを指定するか、HWPlugin_Init(profile_path) の",
+    "引数で直接パスを渡してください。全項目省略可(省略時はfluidsynthの既定値)。"
+  ],
+
+  "sample_rate": 44100,
+
+  "gain":     0.5,
+  "polyphony": 256,
+  "reverb":   true,
+  "chorus":   true,
+
+  "_comment_audio": [
+    "audio_driver: fluid_synth_t自身のaudio.driver設定へそのまま渡す",
+    "  (例: 'wasapi'/'dsound'/'alsa'/'pulseaudio'/'coreaudio')。",
+    "  空文字ならfluidsynthがコンパイル時に有効な最初のドライバへ自動選択する。",
+    "audio_device: audio.<audio_driver>.device へ渡す。空文字で既定デバイス",
+    "  (audio_driverが空文字の場合は無視される)。",
+    "audio_period_size / audio_periods: audio.period-size / audio.periods。",
+    "  0を指定するとfluidsynthのプラットフォーム別既定値のまま(未設定)にする。",
+    "  総レイテンシ = audio_period_size * audio_periods [samples]。"
+  ],
+  "audio_driver":      "",
+  "audio_device":      "",
+  "audio_period_size": 0,
+  "audio_periods":     0
+}

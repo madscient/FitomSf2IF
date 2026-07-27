@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "fitomsf2if",
+  "version": "0.1.0",
+  "description": "FITOM_X IHWPlugin wrapper around fluidsynth (fluid_synth_t + fluid_audio_driver_t, no fluidsynth MIDI-driver layer)",
+  "dependencies": [
+    "fluidsynth",
+    "nlohmann-json"
+  ]
+}

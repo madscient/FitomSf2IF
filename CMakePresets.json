@@ -1,0 +1,53 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "windows-vs2022",
+      "displayName": "Windows (Visual Studio 2022)",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        },
+        "VCPKG_APPLOCAL_DEPS":           { "type": "BOOL", "value": "ON" },
+        "X_VCPKG_APPLOCAL_DEPS_INSTALL": { "type": "BOOL", "value": "ON" }
+      }
+    },
+    {
+      "name": "windows-vs2026",
+      "displayName": "Windows (Visual Studio 2026)",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        },
+        "VCPKG_APPLOCAL_DEPS":           { "type": "BOOL", "value": "ON" },
+        "X_VCPKG_APPLOCAL_DEPS_INSTALL": { "type": "BOOL", "value": "ON" }
+      }
+    },
+    {
+      "name": "linux-vcpkg",
+      "displayName": "Linux (vcpkg)",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        },
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-vs2022", "configurePreset": "windows-vs2022" },
+    { "name": "windows-vs2026", "configurePreset": "windows-vs2026" },
+    { "name": "linux-vcpkg",    "configurePreset": "linux-vcpkg"   }
+  ]
+}

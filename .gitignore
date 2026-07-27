@@ -61,6 +61,13 @@ compile_commands.json
 # vcpkg
 vcpkg_installed/
 
+# SoundFont assets (large binaries, not tracked)
+*.sf2
+*.sf3
+
+# local profile override (commit only *.example.json)
+sf2if_profile.json
+
 # debug information files
 *.dwo
 
