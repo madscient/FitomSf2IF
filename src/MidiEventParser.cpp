@@ -116,18 +116,39 @@ void MidiEventParser::dispatchChannelVoiceMessage(uint8_t status, const uint8_t*
     }
 }
 
+namespace {
+// F0 00 48 01 05 <chan> <soundfont_index> <sf2_bank_msb> <sf2_bank_lsb> <prog> F7
+// (docs/sf2-fluidsynth-integration.md 4節④⑤、2026年7月確定)
+constexpr size_t kBankSelectSysExLen = 11;
+
+// F0 7F <dev> 04 01/03 ll mm F7 (GM2 Universal Realtime SysEx、8節)
+constexpr size_t kUniversalRealtimeSysExLen = 8;
+constexpr uint8_t kUniversalRealtimeId  = 0x7F;
+constexpr uint8_t kDeviceControlSubId1  = 0x04;
+constexpr uint8_t kMasterVolumeSubId2   = 0x01;
+constexpr uint8_t kMasterFineTuneSubId2 = 0x03;
+} // namespace
+
 void MidiEventParser::dispatchSystemExclusive(const uint8_t* data, size_t len) {
+    // GM2 Universal Realtime SysEx: F0 7F <dev> 04 01/03 ll mm F7
+    // マスターボリューム/マスターファインチューニング(8節・4節②参照)。
+    // デバイスIDは判定しない(FITOM_X本体自身の受信側実装と同じ規約、8節冒頭)。
+    if (len == kUniversalRealtimeSysExLen && data[1] == kUniversalRealtimeId
+        && data[3] == kDeviceControlSubId1) {
+        const uint8_t subId2 = data[4];
+        const uint8_t ll = data[5];
+        const uint8_t mm = data[6];
+        if (subId2 == kMasterVolumeSubId2) {
+            engine_.setMasterVolume(mm); // 8節: 「mmの値、7bit精度で反映」。llは使わない。
+        } else if (subId2 == kMasterFineTuneSubId2) {
+            const int value14 = (static_cast<int>(mm) << 7) | ll;
+            engine_.setMasterFineTuning(value14);
+        }
+        return;
+    }
+
     // プライベートSysEx: F0 00 48 01 <sub-cmd> ... F7
     // (docs/manuals/midi-message-reference.md 8.1節と同じマニュファクチャラID)
-    //
-    // TODO(sub-cmd 0x05): SF2直行パスのバンク選択メッセージ
-    // {chan, file, sf2_bank, prog} を1メッセージにまとめる方針は決定済みだが、
-    // 具体的なバイト列レイアウトは未確定
-    // (docs/sf2-fluidsynth-integration.md 5節「バンク選択を伝えるプライベート
-    // SysEx(sub-cmd 0x05案)の正式なバイト列仕様」参照。file が可変長文字列に
-    // なるため、既存の8.1節JSON埋め込み方式に寄せるか固定長+文字列末尾にするか
-    // 未確定)。FITOM_X本体側の実装が固まり次第、ここでパースして
-    // engine_.selectProgram(chan, file, sf2_bank, prog) を呼ぶこと。
     constexpr uint8_t kManufacturerId[3] = {0x00, 0x48, 0x01};
     constexpr size_t  kHeaderLen = 1 /*F0*/ + 3 /*manufacturer id*/ + 1 /*sub-cmd*/;
 
@@ -140,9 +161,18 @@ void MidiEventParser::dispatchSystemExclusive(const uint8_t* data, size_t len) {
 
     const uint8_t subCmd = data[4];
     switch (subCmd) {
-        case 0x05:
-            // TODO: 未実装(上記コメント参照)。
+        case 0x05: {
+            // F0 00 48 01 05 <chan> <soundfont_index> <sf2_bank_msb> <sf2_bank_lsb> <prog> F7
+            if (len != kBankSelectSysExLen) {
+                break; // 不正な長さ。破棄する。
+            }
+            const int chan            = data[5];
+            const int soundfont_index = data[6];
+            const int sf2_bank        = (static_cast<int>(data[7]) << 7) | data[8]; // MSB×128+LSB(14bit)
+            const int prog            = data[9];
+            engine_.selectProgramByIndex(chan, soundfont_index, sf2_bank, prog);
             break;
+        }
         default:
             // sub-cmd 0x01-0x04等、このプラグインに関係しないメッセージは無視する
             // (sub-cmd 0x04 = チャンネル窓割り当てはFITOM_Xコア内部の変換テーブル

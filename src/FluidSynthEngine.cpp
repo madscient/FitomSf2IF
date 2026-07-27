@@ -2,6 +2,8 @@
 
 #include <fluidsynth.h>
 
+#include <algorithm>
+
 namespace sf2if {
 
 FluidSynthEngine::~FluidSynthEngine() {
@@ -132,15 +134,42 @@ int FluidSynthEngine::loadSoundFontCached(const std::string& file) {
     return sfont_id;
 }
 
-bool FluidSynthEngine::selectProgram(int chan, const std::string& file, int sf2_bank, int prog) {
+void FluidSynthEngine::setSoundFontList(const std::vector<std::string>& files) {
+    std::vector<int> ids;
+    ids.reserve(files.size());
+    for (const auto& file : files) {
+        ids.push_back(synth_ ? loadSoundFontCached(file) : -1);
+    }
+    soundfont_ids_by_index_ = std::move(ids);
+}
+
+bool FluidSynthEngine::selectProgramByIndex(int chan, int soundfont_index, int sf2_bank, int prog) {
     if (!synth_) return false;
-    const int sfont_id = loadSoundFontCached(file);
+    if (soundfont_index < 0 || static_cast<size_t>(soundfont_index) >= soundfont_ids_by_index_.size()) {
+        return false; // setSoundFontList()で渡されていない添字
+    }
+    const int sfont_id = soundfont_ids_by_index_[static_cast<size_t>(soundfont_index)];
     if (sfont_id < 0) {
         // ④節:「該当presetが実在しない場合」はfluidsynth自身の挙動に委ねる方針だが、
         // ファイル自体のロード失敗はそれ以前の話なので単純に失敗を返す。
         return false;
     }
     return fluid_synth_program_select(synth_, chan, sfont_id, sf2_bank, prog) == FLUID_OK;
+}
+
+void FluidSynthEngine::setMasterVolume(int valueMsb) {
+    if (!synth_) return;
+    const float fraction = static_cast<float>(std::clamp(valueMsb, 0, 127)) / 127.0f;
+    fluid_synth_set_gain(synth_, static_cast<float>(config_.gain) * fraction);
+}
+
+void FluidSynthEngine::setMasterFineTuning(int value14) {
+    if (!synth_) return;
+    const int clamped = std::clamp(value14, 0, 16383);
+    const float cents = static_cast<float>(clamped - 8192) * 100.0f / 8192.0f;
+    for (int chan = 0; chan < 16; ++chan) {
+        fluid_synth_set_gen(synth_, chan, GEN_FINETUNE, cents);
+    }
 }
 
 unsigned int FluidSynthEngine::latencySamples() const {

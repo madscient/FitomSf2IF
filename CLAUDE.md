@@ -23,15 +23,17 @@ FITOM_X側のドキュメントが正本であり、本リポジトリのREADME.
 
 - **`../FITOM_X`** — FITOM_X本体。以下が正本:
   - `docs/sf2-fluidsynth-integration.md` — このプラグインの設計検討ドキュメント(必読)。
-    ステータス・未決事項は5節「残る検討事項」を参照。
+    **2026年7月に設計確定**(残る事項は5節、GUIダイアログ等FITOM_X本体側のみ)。
   - `plugin_sdk/include/fitom/IHWPlugin.h` — hwifプラグインC API契約の正本。
     `plugin_sdk/include/fitom/IHWPlugin.h`(このリポジトリ内)はその独立コピー。
   - `config_schema/profile.schema.json` — `sf2_banks`/`sf2_channel_windows` のスキーマ
-    (実装済み、FITOM_Xコア側のローダーは未実装)。
+    (実装済み、FITOM_Xコア側のローダーは本リポジトリのスコープ外)。
   - `docs/plugin-hwif.md` — hwifプラグイン要件定義(共通契約)。
-  - `docs/manuals/midi-message-reference.md` 8.1節 — プライベートSysEx
-    (マニュファクチャラID `00 48 01`)の既存フォーマット。sub-cmd 0x05(バンク選択)は
-    この枠組みに新設される想定だがバイト列は未確定。
+  - `docs/manuals/midi-message-reference.md` 2.6節・8節・8.1節・8.2節 — SF2直行パスの
+    ユーザー向け説明、GM2 Universal Realtime SysEx(マスターボリューム`04 01`/
+    ファインチューニング`04 03`)、プライベートSysEx(マニュファクチャラID`00 48 01`、
+    sub-cmd 0x05=バンク選択)の確定フォーマット。本プラグインはこれらを実装済み
+    (`src/MidiEventParser.cpp`、詳細は`docs/STATUS.md`)。
 
 **`source/repos`配下の他リポジトリ(`../FITOM_X`を含む)のファイルは、たとえ原因や
 修正箇所がそちら側にあると判明しても、ユーザーの明示的な許可なく勝手に編集しない
@@ -54,10 +56,20 @@ FITOM_X側のドキュメントが正本であり、本リポジトリのREADME.
   `HWPlugin_WriteBlock`で受け取る生MIDIバイト列は、チャンネルニブルが既に
   fluidsynth chan として解決済みの前提で実装している。
 - CC#0(バンクセレクトMSB)・CC#32(バンクセレクトLSB)は標準CCとして転送されない
-  想定(コア側がプライベートSysExへ変換して送る)。生バイト列として届いた場合は
+  (コア側がプライベートSysExへ変換して送る)。生バイト列として届いた場合は
   読み捨てる(`MidiEventParser::dispatchChannelVoiceMessage`)。
-- `Sf2BankRegistry`(CC#32インデックス→{file, sf2_bank})はFITOM_Xコア側に新設される
-  設計であり、本リポジトリのスコープ外。
+- **バンク選択はプライベートSysEx sub-cmd 0x05で受け取る(確定フォーマット)**:
+  `F0 00 48 01 05 <chan> <soundfont_index> <sf2_bank_msb> <sf2_bank_lsb> <prog> F7`。
+  `soundfont_index`は`HWPlugin_Open()`の`params_json`の`"soundfonts"`配列(絶対パス
+  一覧)の添字。ファイルパスという可変長・非ASCII混在しうる文字列を演奏中の
+  SysExに含めずに済ませるための設計(詳細は設計ドキュメント4節④)。
+- `Sf2BankRegistry`(CC#32→soundfont_index/sf2_bank解決、`soundfonts`一覧構築)は
+  FITOM_Xコア側に新設される設計であり、本リポジトリのスコープ外。
+- **マスターボリューム/ファインチューニングは新規プロトコルを使わず、既存のGM2
+  Universal Realtime SysEx(`F0 7F <dev> 04 01/03 ll mm F7`)をFITOM_Xコアがそのまま
+  転送してくる**。fluidsynth自身がこれをどう処理するかは実装側(本プラグイン)の
+  判断に委ねられており、`fluid_synth_set_gain()`/`fluid_synth_set_gen(GEN_FINETUNE)`
+  で実装した(詳細は`docs/STATUS.md`)。
 
 ## 未解決の TODO・現在の実装状況
 

@@ -3,11 +3,11 @@
 // IHWPlugin C API 実装本体。FITOM_X本体からは他のhwifプラグインと区別のつかない
 // 1つのhwifインスタンスとして振る舞う(docs/sf2-fluidsynth-integration.md 4節①②参照)。
 //
-// fluid_synth_t インスタンスは全MPUで1つを共有する(同5節)。HWPlugin_Openは
-// devices[]エントリ1つにつき1回呼ばれる想定だが、複数エントリが同じプラグインを
-// 使う場合の扱いは未確定(5節「残る検討事項」)。現状は呼ばれるたびに共有エンジンを
-// 指す軽量ハンドルを新規発行するだけの実装とし、複数ハンドル間の優先順位・排他は
-// 一切設けていない。
+// fluid_synth_t インスタンスは全MPUで1つを共有する(同5節)。複数の`devices[]`
+// エントリが`chip=="SF2"`を使った場合はFITOM_Xコア側が起動時エラーで停止する
+// (4節⑥、2026年7月確定)ため、HWPlugin_Openはこのプラグインに対して実質1回しか
+// 呼ばれない。呼ばれるたびに共有エンジンを指す軽量ハンドルを新規発行するだけの
+// 実装で十分であり、複数ハンドル間の優先順位・排他は設けていない。
 
 #include "fitom/IHWPlugin.h"
 
@@ -23,7 +23,9 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <string>
 #include <unordered_set>
+#include <vector>
 
 // IHWPlugin.h はHWDeviceOpaqueを前方宣言のみ(不透明ポインタ)。実体はこのDLL内で
 // 定義する。このプラグインは全ハンドルで共有エンジンを指すだけなので、状態は持たない。
@@ -162,7 +164,7 @@ FITOM_HWP_API void FITOM_HWP_CALL HWPlugin_FreeString(const char* str) {
     delete[] str;
 }
 
-FITOM_HWP_API HWResult FITOM_HWP_CALL HWPlugin_Open(const char* /*params_json*/, HWHandle* out_handle) {
+FITOM_HWP_API HWResult FITOM_HWP_CALL HWPlugin_Open(const char* params_json, HWHandle* out_handle) {
     if (!out_handle) {
         return HW_ERR_INVALID_ARG;
     }
@@ -173,6 +175,23 @@ FITOM_HWP_API HWResult FITOM_HWP_CALL HWPlugin_Open(const char* /*params_json*/,
         // （実装は失敗を返すこと）」
         return HW_ERR_INVALID_ARG;
     }
+
+    // params_jsonの"soundfonts"配列(FITOM_Xコアがsf2_banks[].fileから重複除去して
+    // 構築した絶対パス一覧)を読み取り、soundfont_index→sfont_idのキャッシュを
+    // 構築する(4節⑥⑦、2026年7月確定)。他のフィールド(chip/type等)はこのプラグイン
+    // には無関係なので無視する。"soundfonts"が無い/空でもエラーにしない
+    // (`sf2_banks`未設定でSF2デバイスだけ用意する構成を許容する、4節⑦末尾)。
+    if (params_json && params_json[0] != '\0') {
+        try {
+            const nlohmann::json j = nlohmann::json::parse(params_json);
+            if (j.contains("soundfonts")) {
+                s.engine.setSoundFontList(j.at("soundfonts").get<std::vector<std::string>>());
+            }
+        } catch (const nlohmann::json::exception&) {
+            return HW_ERR_INVALID_ARG;
+        }
+    }
+
     // このプラグインは全ハンドルで共有エンジンを指すだけなので、ハンドル自体には
     // 状態を持たせない(不透明ポインタとして識別できれば十分)。
     HWHandle handle = new (std::nothrow) HWDeviceOpaque();

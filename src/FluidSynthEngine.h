@@ -22,6 +22,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace sf2if {
 
@@ -76,12 +77,30 @@ public:
     void keyPressure(int chan, int key, int value);
     void systemReset();
 
-    // ─── SF2直行パスのバンク選択(私的SysEx sub-cmd 0x05相当、④節参照) ──────
-    // file: sf2_banks[].file を解決した絶対/相対パス(相対の場合は呼び出し側で
-    //       プロファイルディレクトリ基点に解決済みであること)。
-    // 同じfileへの2回目以降の呼び出しはsfont_idキャッシュを再利用し、
-    // fluid_synth_sfload()は初回のみ呼ぶ(④節)。
-    bool selectProgram(int chan, const std::string& file, int sf2_bank, int prog);
+    // ─── SF2ファイル一覧(HWPlugin_Openのparams_json、⑥⑦節参照) ─────────────
+    // FITOM_Xコアが`sf2_banks[].file`から重複除去して構築した絶対パス一覧を
+    // params_jsonの"soundfonts"配列としてHWPlugin_Open()時に一度だけ渡してくる。
+    // 各ファイルをこの場で(fluid_synth_sfload()により)ロードし、配列の添字
+    // (soundfont_index)→sfont_idのマップを構築する。個々のファイルのロードに
+    // 失敗しても他のエントリの処理は継続する(該当インデックスへのsfont_idは-1の
+    // ままとし、selectProgramByIndex()は以降そのインデックスに対して黙って
+    // 失敗する。④節末尾のステートレス方針を踏襲)。
+    void setSoundFontList(const std::vector<std::string>& files);
+
+    // ─── SF2直行パスのバンク選択(私的SysEx sub-cmd 0x05相当、④⑤節参照) ─────
+    // soundfont_index: setSoundFontList()で渡した配列の添字(0起算)。
+    // sf2_bank: 0-128(128はSF2慣習のパーカッションバンク)。
+    bool selectProgramByIndex(int chan, int soundfont_index, int sf2_bank, int prog);
+
+    // ─── マスターボリューム/ファインチューニング(GM2 Universal Realtime SysEx、
+    //      4節②参照。FITOM_Xコアが8節のバイト列をそのままHWPlugin_WriteBlock経由で
+    //      転送してくる) ──────────────────────────────────────────────────────
+    // valueMsb: マスターボリュームSysEx(`04 01`)のmmバイト(0-127)。FITOM_X本体
+    //           自身の解釈(8節「7bit精度で反映」)に合わせ、llバイトは使わない。
+    void setMasterVolume(int valueMsb);
+    // value14: マスターファインチューニングSysEx(`04 03`)のll/mmを14bit化した値
+    //          (0-16383、8192=center=ピッチ変化なし)。
+    void setMasterFineTuning(int value14);
 
     unsigned int sampleRate() const { return config_.sample_rate; }
 
@@ -99,7 +118,8 @@ private:
     EngineConfig           config_{};
 
     std::mutex sfont_cache_mtx_;
-    std::unordered_map<std::string, int> sfont_cache_; // file path -> sfont_id
+    std::unordered_map<std::string, int> sfont_cache_;   // file path -> sfont_id
+    std::vector<int> soundfont_ids_by_index_;             // soundfont_index -> sfont_id (-1 = load失敗)
 };
 
 } // namespace sf2if
