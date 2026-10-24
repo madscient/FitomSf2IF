@@ -60,6 +60,7 @@ std::filesystem::path resolveProfilePath(const char* profile_path_arg) {
 struct PluginState {
     std::mutex mtx;
     bool initialized = false;
+    bool offline = false;   // HWPlugin_InitOfflineで初期化した
 
     sf2if::FluidSynthEngine engine;
     std::unique_ptr<sf2if::MidiEventParser> parser;
@@ -72,9 +73,7 @@ PluginState& state() {
     return s;
 }
 
-bool loadProfileAndInit(const char* profile_path_arg) {
-    sf2if::EngineConfig engine_cfg;
-
+bool loadProfile(const char* profile_path_arg, sf2if::EngineConfig& engine_cfg) {
     const std::filesystem::path profile_path = resolveProfilePath(profile_path_arg);
     if (!profile_path.empty()) {
         std::ifstream ifs(profile_path);
@@ -97,7 +96,10 @@ bool loadProfileAndInit(const char* profile_path_arg) {
         engine_cfg.audio_period_size = j.value("audio_period_size", engine_cfg.audio_period_size);
         engine_cfg.audio_periods     = j.value("audio_periods", engine_cfg.audio_periods);
     }
+    return true;
+}
 
+bool initEngine(const sf2if::EngineConfig& engine_cfg) {
     auto& s = state();
     if (!s.engine.init(engine_cfg)) {
         return false;
@@ -125,12 +127,36 @@ FITOM_HWP_API HWResult FITOM_HWP_CALL HWPlugin_Init(const char* profile_path) {
     auto& s = state();
     std::lock_guard<std::mutex> lock(s.mtx);
     if (s.initialized) {
-        return HW_OK; // 冪等
+        return s.offline ? HW_ERR_INVALID_ARG : HW_OK; // 同じモードなら冪等
     }
-    if (!loadProfileAndInit(profile_path)) {
+    sf2if::EngineConfig engine_cfg;
+    if (!loadProfile(profile_path, engine_cfg) || !initEngine(engine_cfg)) {
         return HW_ERR_OPEN_FAILED;
     }
     s.initialized = true;
+    return HW_OK;
+}
+
+FITOM_HWP_API HWResult FITOM_HWP_CALL HWPlugin_InitOffline(const char* profile_path, uint32_t sample_rate) {
+    auto& s = state();
+    std::lock_guard<std::mutex> lock(s.mtx);
+    if (s.initialized) {
+        return s.offline ? HW_OK : HW_ERR_INVALID_ARG; // 同じモードなら冪等
+    }
+    if (!sf2if::FluidSynthEngine::supportsSampleRate(sample_rate)) {
+        return HW_ERR_INVALID_ARG;
+    }
+    sf2if::EngineConfig engine_cfg;
+    if (!loadProfile(profile_path, engine_cfg)) {
+        return HW_ERR_OPEN_FAILED;
+    }
+    engine_cfg.sample_rate = sample_rate;
+    engine_cfg.offline     = true;
+    if (!initEngine(engine_cfg)) {
+        return HW_ERR_OPEN_FAILED;
+    }
+    s.initialized = true;
+    s.offline     = true;
     return HW_OK;
 }
 
@@ -143,10 +169,12 @@ FITOM_HWP_API void FITOM_HWP_CALL HWPlugin_Shutdown() {
     // FluidSynthEngine::shutdown()内のdelete_fluid_audio_driver()がオーディオ
     // コールバックスレッドを同期的に停止・joinしてから戻る
     // (plugin-hwif.md「プラグイン全体のシャットダウン」節の要件を満たす)。
+    // オフラインではオーディオドライバもスレッドも無い。
     s.parser.reset();
     s.engine.shutdown();
     s.open_handles.clear();
     s.initialized = false;
+    s.offline     = false;
 }
 
 FITOM_HWP_API const char* FITOM_HWP_CALL HWPlugin_Enumerate() {
@@ -262,6 +290,7 @@ FITOM_HWP_API bool FITOM_HWP_CALL HWPlugin_IsOpen(HWHandle handle) {
 FITOM_HWP_API uint32_t FITOM_HWP_CALL HWPlugin_GetLatencySamples(HWHandle /*handle*/) {
     // FMエンジン内蔵hwif(FitomEmuIF等)と同じ理由: 自前のオーディオバッファサイズが
     // そのままレイテンシになる(docs/plugin-hwif.md「レイテンシ同期」節参照)。
+    // オフラインではオーディオドライバが無いので0になる(契約どおり)。
     auto& s = state();
     std::lock_guard<std::mutex> lock(s.mtx);
     return s.initialized ? s.engine.latencySamples() : 0;
@@ -270,6 +299,17 @@ FITOM_HWP_API uint32_t FITOM_HWP_CALL HWPlugin_GetLatencySamples(HWHandle /*hand
 FITOM_HWP_API void FITOM_HWP_CALL HWPlugin_SetDelaySamples(HWHandle /*handle*/, uint32_t /*delay_samples*/) {
     // 自身のレイテンシ(バッファサイズ)と一致するよう構成済みのためno-op
     // (FMエンジン内蔵hwifと同じ理由、plugin-hwif.md参照)。
+}
+
+FITOM_HWP_API HWResult FITOM_HWP_CALL HWPlugin_Render(float* out, uint32_t frames) {
+    auto& s = state();
+    std::lock_guard<std::mutex> lock(s.mtx);
+    if (!out || !s.initialized || !s.offline) {
+        return HW_ERR_INVALID_ARG;
+    }
+    // 全ハンドルが1つのfluid_synth_tを共有しているので、その出力がそのまま全デバイスの
+    // ミックスになる。
+    return s.engine.render(out, frames) ? HW_OK : HW_ERR_IO;
 }
 
 } // extern "C"

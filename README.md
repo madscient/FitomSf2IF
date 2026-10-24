@@ -45,6 +45,8 @@ FitomSf2IF/
 │   └── MidiEventParser.h/.cpp    # 生MIDIバイト列パーサ
 ├── examples/
 │   └── smoke_test.cpp            # 動作確認用実行ファイル(BUILD_FITOMSF2IF_TEST=ON)
+├── tests/
+│   └── offline_render_test.cpp   # オフライン描画の試験(BUILD_FITOMSF2IF_TEST=ON、CTest登録)
 ├── docs/
 │   └── STATUS.md                 # 実装状況・未実装項目
 ├── sf2if_profile.example.json    # プロファイルサンプル
@@ -87,7 +89,9 @@ cmake -B build -G "Visual Studio 17 2022" `
 cmake --build build
 ```
 
-動作確認用スモークテストをビルドする場合は `-DBUILD_FITOMSF2IF_TEST=ON` を付ける。
+動作確認用スモークテストと試験をビルドする場合は `-DBUILD_FITOMSF2IF_TEST=ON` を付ける。
+試験は音声デバイスを使わないので、`ctest --test-dir build -C Release` でどの環境でも実行できる
+(スモークテストは実デバイスを鳴らすため CTest には登録していない)。
 
 ### ビルド成果物
 
@@ -95,10 +99,11 @@ cmake --build build
 |---|---|
 | `FitomSf2IF` | `FitomSf2IF.dll` / `libFitomSf2IF.so` — FITOM_X ロード対象 |
 | `FitomSf2IF_test` | 動作確認用実行ファイル(オプション) |
+| `FitomSf2IF_offline_render_test` | オフライン描画の試験(オプション) |
 
 ## プロファイル (`sf2if_profile.json`)
 
-探索優先順(`HWPlugin_Init(profile_path)`):
+探索優先順(`HWPlugin_Init(profile_path)` / `HWPlugin_InitOffline(profile_path, sample_rate)`):
 
 1. `profile_path` 引数
 2. 環境変数 `SF2IF_PROFILE`
@@ -125,6 +130,9 @@ cmake --build build
 (`audio.driver`/`audio.period-size`/`audio.periods`)にそのまま対応する。
 有効なドライバ名はプラットフォームによって異なる(Windows: `wasapi`/`dsound`、
 Linux: `alsa`/`pulseaudio`/`jack`、macOS: `coreaudio`等)。
+
+`HWPlugin_InitOffline`で初期化したときは、`sample_rate`の代わりに引数のサンプルレートを
+使い、`audio_*`は使わない(音声デバイスを開かない)。
 
 ## 現在の実装状況
 

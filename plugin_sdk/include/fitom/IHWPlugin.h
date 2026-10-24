@@ -6,8 +6,8 @@
 // ─── 設計原則 ────────────────────────────────────────────────────────────────
 //   hw::HWControllerBase の write / reset / isOpen を C 関数にフラット化。
 //   DLL は不透明ハンドル (HWHandle) を管理し、FITOM コアはその値を保持するだけ。
-//   FitomIFTest 側でこの C API を実装した共有ライブラリ (fitom_hw.dll / .so) を
-//   ビルドすることで FITOM コアと分離できる。
+//   HW I/F プラグイン (実機の FitomHwIF、エミュレータの FitomEmuIF 等) が、
+//   この C API を実装した共有ライブラリをビルドすることで FITOM コアと分離できる。
 //
 // ─── デバイス列挙 ────────────────────────────────────────────────────────────
 //   HWPlugin_Enumerate で接続済みデバイスの JSON 文字列を返す。
@@ -58,7 +58,7 @@ extern "C" {
 #endif
 
 // ─── プラグイン情報 ──────────────────────────────────────────────────────────
-// プラグイン名を返す ("FitomIFTest", "DummyHW" 等)
+// プラグイン名を返す ("FitomHwIF", "FitomEmuIF" 等)
 FITOM_HWP_API const char* FITOM_HWP_CALL HWPlugin_GetName();
 
 // ─── 初期化 ──────────────────────────────────────────────────────────────────
@@ -134,6 +134,92 @@ FITOM_HWP_API uint32_t FITOM_HWP_CALL HWPlugin_GetLatencySamples(HWHandle handle
 //   delay_samples == 0 の場合は遅延なし (単デバイス構成向け)。
 FITOM_HWP_API void FITOM_HWP_CALL HWPlugin_SetDelaySamples(
     HWHandle handle, uint32_t delay_samples);
+
+// ─── 部位ごとのゲイン（任意実装）─────────────────────────────────────────────
+// チップによっては、音を複数の端子から別々に出す（OPNA の FM と SSG 等）。
+// この出力のひとつひとつを部位と呼び、名前の文字列で指定する
+// （"FM"、"SSG" 等。大文字小文字を区別する）。実機ではボード上の回路で
+// ミックスするので、音量のバランスは機種で違う。FM エンジン内蔵 hwif が、
+// そのバランスを FITOM から調整できるようにするための関数。
+//
+// 4 関数は組でエクスポートする。FITOM は HWPlugin_GetPartCount の有無で判定し、
+// 無ければどれも呼ばず、どのデバイスも部位を持たないものとして扱う
+// （物理チップの hwif は実装しなくてよい）。
+// HWPlugin_GetPartCount があるのに残りが欠けているプラグインは、FITOM が
+// ロードに失敗させる。
+//
+// HWPlugin_GetPartCount:
+//   デバイスが持つ部位の数を返す。部位を持たないデバイスは 0。
+// HWPlugin_GetPartName:
+//   index 番目の部位の名前を返す。範囲外は nullptr。
+//   文字列は HWPlugin_Close(handle) まで有効（呼び出し元は解放しない）。
+//   並ぶ順序は定めない。設定ファイル等に書き残すときは名前を使うこと。
+// HWPlugin_SetPartGain / HWPlugin_GetPartGain:
+//   gain は L/R 独立で、1.0 = 0 dB。pan による L/R の振り分けとは別に掛かる
+//   （実際に掛かるのは両者の積）。
+//   デバイスが持たない部位の名前と nullptr は HW_ERR_INVALID_ARG。
+//   設定したゲインは HWPlugin_Close(handle) で既定値に戻る。
+//   既定値は、HWPlugin_Open の直後に HWPlugin_GetPartGain で取得できる。
+//   音声出力の動作中に呼び出せること。
+FITOM_HWP_API uint32_t    FITOM_HWP_CALL HWPlugin_GetPartCount(HWHandle handle);
+FITOM_HWP_API const char* FITOM_HWP_CALL HWPlugin_GetPartName(
+    HWHandle handle, uint32_t index);
+FITOM_HWP_API HWResult    FITOM_HWP_CALL HWPlugin_SetPartGain(
+    HWHandle handle, const char* part, float gain_l, float gain_r);
+FITOM_HWP_API HWResult    FITOM_HWP_CALL HWPlugin_GetPartGain(
+    HWHandle handle, const char* part, float* out_gain_l, float* out_gain_r);
+
+// ─── マスターボリューム（任意実装）───────────────────────────────────────────
+// FITOM のマスターボリューム（GM2 Universal Realtime のマスターボリューム、
+// GUI のシステム設定ダイアログ、プロファイルの master_volume）を、デバイスの
+// 音声出力に掛けるための関数。音声出力を持つプラグイン（FM エンジン内蔵 hwif 等）
+// が実装する。FITOM はエクスポートの有無を見て、無ければ呼ばない（物理チップの
+// hwif は実装しなくてよい）。
+//
+//   volume: 0〜127。GM2 のマスターボリュームの上位 7bit と同じ値。
+//           音量への換算はプラグインが決める。128 以上は HW_ERR_INVALID_ARG。
+//   一度も呼ばれていないときは 127（減衰なし）として扱うこと。
+//   部位ゲイン・pan とは別に掛かる（実際に掛かるのはこれらの積）。
+//   FITOM は HWPlugin_Open したデバイスごとに同じ値を渡す。開いた後に
+//   プロファイルの値で一度呼び、以後は値が変わるたびに呼ぶ。
+//   chip:"SF2" のデバイスには呼ばない（SoundFont プラグインには SysEx で送る）。
+//   音声出力の動作中に呼び出せること。
+FITOM_HWP_API HWResult    FITOM_HWP_CALL HWPlugin_SetMasterVolume(
+    HWHandle handle, uint8_t volume);
+
+// ─── オフライン描画（任意実装）───────────────────────────────────────────────
+// 音声デバイスへ出さず、FITOM が求めた分だけ音を描画して返すモード。
+// SMF を WAV へ変換する fitom_render が使う。音声出力を持つプラグイン
+// （FM エンジン内蔵 hwif、SoundFont プラグイン等）が実装する。
+// 物理チップの hwif は実装しない（音を取り込む手段が無いため）。
+//
+// 2 関数は組でエクスポートする。FITOM は HWPlugin_InitOffline の有無で判定し、
+// HWPlugin_InitOffline があるのに HWPlugin_Render が欠けているプラグインは、
+// FITOM がロードに失敗させる。
+//
+// HWPlugin_InitOffline:
+//   HWPlugin_Init の代わりに呼ぶ（同じプロセスで両方を呼ぶことはない）。
+//   profile_path は HWPlugin_Init と同じ。音声デバイスは開かない。
+//   以後は HWPlugin_Init の後と同じく、他の全関数が使えること。
+//   sample_rate: 描画するサンプルレート（Hz）。プラグイン固有の設定ファイルに
+//   サンプルレートの記述があっても、こちらを使う。
+//   扱えないサンプルレートは HW_ERR_INVALID_ARG。
+//   このモードでは、HWPlugin_GetLatencySamples は 0 を返すこと
+//   （書き込みは次の HWPlugin_Render の先頭から反映されるため）。
+// HWPlugin_Render:
+//   開いている全デバイスの音を混ぜ、frames フレーム分を out へ書く。
+//   out は L/R インターリーブの float（frames * 2 要素）。1.0 = フルスケール。
+//   [-1, 1] に収める処理（クリップ）はしない。複数のプラグインの音を足した後で
+//   FITOM が行う。部位ごとのゲイン・マスターボリューム・pan は、音声デバイスへ
+//   出すときと同じく掛けること。
+//   呼び出しより前に行った HWPlugin_Write / HWPlugin_WriteBlock は、
+//   描画する最初のフレームから反映すること。
+//   HWPlugin_InitOffline で初期化していなければ HW_ERR_INVALID_ARG。
+//   FITOM は HWPlugin_Write と同じスレッドから、交互に呼ぶ（同時には呼ばない）。
+FITOM_HWP_API HWResult    FITOM_HWP_CALL HWPlugin_InitOffline(
+    const char* profile_path, uint32_t sample_rate);
+FITOM_HWP_API HWResult    FITOM_HWP_CALL HWPlugin_Render(
+    float* out, uint32_t frames);
 
 #ifdef __cplusplus
 }

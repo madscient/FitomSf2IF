@@ -41,6 +41,10 @@ struct EngineConfig {
     std::string  audio_device;        // audio.<driver>.device へ設定(空文字で既定デバイス)
     unsigned int audio_period_size = 0; // audio.period-size (0 = fluidsynth既定値)
     unsigned int audio_periods     = 0; // audio.periods (0 = fluidsynth既定値)
+
+    // true: fluid_audio_driver_tを作らず、render()で描画する(HWPlugin_InitOffline)。
+    // audio.*の設定はすべて使わない。
+    bool         offline           = false;
 };
 
 // fluid_synth_t + fluid_audio_driver_t の生成・破棄・SoundFontロードキャッシュ・
@@ -58,8 +62,12 @@ public:
     FluidSynthEngine(const FluidSynthEngine&)            = delete;
     FluidSynthEngine& operator=(const FluidSynthEngine&) = delete;
 
-    // fluid_synth_t生成 + fluid_audio_driver_t起動までを行う。
+    // fluid_synth_t生成 + fluid_audio_driver_t起動までを行う(offline時は起動しない)。
     bool init(const EngineConfig& config);
+
+    // synth.sample-rateの範囲はfluidsynthのバージョンで変わりうるため、定数で持たず
+    // fluidsynth自身に問い合わせる。
+    static bool supportsSampleRate(unsigned int sample_rate);
 
     // HWPlugin_Shutdownから同期的に呼ばれる想定。delete_fluid_audio_driver()は
     // 内部のオーディオコールバックスレッドを同期的に停止・joinしてから返る
@@ -106,8 +114,16 @@ public:
 
     // audio.period-size * audio.periods (実際にfluidsynthへ設定された値を
     // fluid_settings_getint()で読み戻して計算する。設定を明示しなかった項目は
-    // プラットフォーム別のfluidsynth既定値になる)。
+    // プラットフォーム別のfluidsynth既定値になる)。offline時は0。
     unsigned int latencySamples() const;
+
+    // offline時の描画。out_interleavedはL/Rインターリーブでframes*2要素。クリップしない。
+    // fluidsynthはFLUID_BUFSIZE(64)フレーム単位で合成し、前回の呼び出しで余った
+    // フレームを次の呼び出しの先頭で返す。そのため呼び出しの合間に送ったイベントは
+    // 次の64フレーム境界から反映され、最大63フレーム遅れる。
+    // (確認済み: tests/offline_render_test.cpp が、それまでの描画の分け方を変えて
+    // 発音の遅れを計測している。fluidsynth 2.5.5)
+    bool render(float* out_interleaved, uint32_t frames);
 
 private:
     int loadSoundFontCached(const std::string& file);

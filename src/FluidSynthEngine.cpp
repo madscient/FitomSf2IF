@@ -30,18 +30,20 @@ bool FluidSynthEngine::init(const EngineConfig& config) {
     // MidiEventParserがパースしこのクラスのnoteOn等を直接呼ぶ(2節参照)。
     // 音声デバイス層(fluid_audio_driver_t)はこのプラグインが自己完結するために使う
     // (他のhwifプラグインと同じく1台の楽器として振る舞う、4節②参照)。
-    if (!config_.audio_driver.empty()) {
-        fluid_settings_setstr(settings_, "audio.driver", config_.audio_driver.c_str());
-    }
-    if (!config_.audio_device.empty() && !config_.audio_driver.empty()) {
-        const std::string key = "audio." + config_.audio_driver + ".device";
-        fluid_settings_setstr(settings_, key.c_str(), config_.audio_device.c_str());
-    }
-    if (config_.audio_period_size > 0) {
-        fluid_settings_setint(settings_, "audio.period-size", static_cast<int>(config_.audio_period_size));
-    }
-    if (config_.audio_periods > 0) {
-        fluid_settings_setint(settings_, "audio.periods", static_cast<int>(config_.audio_periods));
+    if (!config_.offline) {
+        if (!config_.audio_driver.empty()) {
+            fluid_settings_setstr(settings_, "audio.driver", config_.audio_driver.c_str());
+        }
+        if (!config_.audio_device.empty() && !config_.audio_driver.empty()) {
+            const std::string key = "audio." + config_.audio_driver + ".device";
+            fluid_settings_setstr(settings_, key.c_str(), config_.audio_device.c_str());
+        }
+        if (config_.audio_period_size > 0) {
+            fluid_settings_setint(settings_, "audio.period-size", static_cast<int>(config_.audio_period_size));
+        }
+        if (config_.audio_periods > 0) {
+            fluid_settings_setint(settings_, "audio.periods", static_cast<int>(config_.audio_periods));
+        }
     }
 
     synth_ = new_fluid_synth(settings_);
@@ -51,6 +53,9 @@ bool FluidSynthEngine::init(const EngineConfig& config) {
         return false;
     }
 
+    if (config_.offline) {
+        return true;
+    }
     audio_driver_ = new_fluid_audio_driver(settings_, synth_);
     if (!audio_driver_) {
         delete_fluid_synth(synth_);
@@ -60,6 +65,18 @@ bool FluidSynthEngine::init(const EngineConfig& config) {
         return false;
     }
     return true;
+}
+
+bool FluidSynthEngine::supportsSampleRate(unsigned int sample_rate) {
+    fluid_settings_t* settings = new_fluid_settings();
+    if (!settings) {
+        return false;
+    }
+    double min_rate = 0.0;
+    double max_rate = 0.0;
+    fluid_settings_getnum_range(settings, "synth.sample-rate", &min_rate, &max_rate);
+    delete_fluid_settings(settings);
+    return sample_rate >= min_rate && sample_rate <= max_rate;
 }
 
 void FluidSynthEngine::shutdown() {
@@ -173,13 +190,29 @@ void FluidSynthEngine::setMasterFineTuning(int value14) {
 }
 
 unsigned int FluidSynthEngine::latencySamples() const {
-    if (!settings_) return 0;
+    if (!audio_driver_) return 0;
     int period_size = 0;
     int periods = 0;
     fluid_settings_getint(settings_, "audio.period-size", &period_size);
     fluid_settings_getint(settings_, "audio.periods", &periods);
     if (period_size <= 0 || periods <= 0) return 0;
     return static_cast<unsigned int>(period_size) * static_cast<unsigned int>(periods);
+}
+
+bool FluidSynthEngine::render(float* out_interleaved, uint32_t frames) {
+    if (!synth_ || audio_driver_) return false;
+    // fluid_synth_write_float()のlenはint
+    constexpr uint32_t kMaxChunkFrames = 1u << 16;
+    while (frames > 0) {
+        const uint32_t n = std::min(frames, kMaxChunkFrames);
+        if (fluid_synth_write_float(synth_, static_cast<int>(n),
+                                    out_interleaved, 0, 2, out_interleaved, 1, 2) != FLUID_OK) {
+            return false;
+        }
+        out_interleaved += static_cast<size_t>(n) * 2;
+        frames -= n;
+    }
+    return true;
 }
 
 } // namespace sf2if

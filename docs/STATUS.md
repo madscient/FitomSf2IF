@@ -11,7 +11,18 @@
 
 - IHWPlugin C API 一式(`src/Sf2IfImpl.cpp`): `HWPlugin_GetName/Init/Shutdown/
   Enumerate/FreeString/Open/Close/Write/WriteBlock/Reset/GetClock/GetPanpot/
-  IsOpen/GetLatencySamples/SetDelaySamples`
+  IsOpen/GetLatencySamples/SetDelaySamples/InitOffline/Render`
+  - 任意の組のうち、部位ごとのゲイン(`HWPlugin_GetPartCount`ほか3関数)と
+    `HWPlugin_SetMasterVolume`はエクスポートしない。FITOM_Xは`chip:"SF2"`の
+    デバイスに`SetMasterVolume`を呼ばず、マスターボリュームはSysExで送ってくる
+    (FITOM_X `docs/interfaces/plugin-hwif.md`「SoundFont プラグインへの追加の約束」節)。
+- **オフライン描画(`HWPlugin_InitOffline`/`HWPlugin_Render`)**: FITOM_Xの`fitom_render`
+  (SMF→WAV変換)用。`fluid_audio_driver_t`を作らず、`HWPlugin_Render`で
+  `fluid_synth_write_float()`を呼ぶ。サンプルレートは引数がプロファイルより優先、
+  `GetLatencySamples`は0、出力はクリップしない。範囲外のサンプルレートは
+  fluidsynthの`synth.sample-rate`の範囲を問い合わせて`HW_ERR_INVALID_ARG`にする。
+  `tests/offline_render_test.cpp`(CTest登録、音声デバイス不要)で確認済み。
+  契約との差は下の「その他の既知の課題」を参照。
 - 標準MIDIチャンネルボイスメッセージ(Note On/Off, CC, Program Change,
   Pitch Bend, Channel/Poly Pressure)の`fluid_synth_t`への中継
   (`src/MidiEventParser.cpp`)。CC#0/CC#32(バンクセレクト)は読み捨てる(下記
@@ -54,6 +65,20 @@
 - **`plugin_sdk/include/fitom/IHWPlugin.h`の同期問題**: FITOM_Xの
   `plugin_sdk/include/fitom/IHWPlugin.h`と内容を同一に保つ必要があるが、現状は
   独立コピーとして手動管理している(FitomEmuIFと同じ既知の課題)。
+  最後に同期したのはFITOM_Xのコミット`faaf183`の版(部位ゲイン・
+  マスターボリューム・オフライン描画の任意関数を含む)。
+- **オフライン描画の書き込みの反映は64フレーム単位**: 契約は「`HWPlugin_Render`の
+  呼び出しより前の`Write`/`WriteBlock`は、描画する最初のフレームから反映する」だが、
+  fluidsynthは64フレーム(`FLUID_BUFSIZE`)単位で合成し、前回の描画で余ったフレームを
+  次の描画の先頭で返すため、書き込みは次の64フレーム境界から反映される。遅れは
+  `(64 - それまでの描画総数 % 64) % 64`フレーム(0〜63)。FITOMは1ms分ずつ描画するので、
+  48kHzでは0/16/32/48フレーム(最大1ms)、44.1kHzでは0〜63フレーム(最大約1.4ms)の
+  揺れになる。
+  確認済み: `tests/offline_render_test.cpp`の`testWriteTiming`が、それまでの描画の
+  分け方(44/45/48/64/128/100フレームの1回、48フレームの2〜4回、44+44+45フレーム)を
+  変えて発音の遅れを計測し、上の式と一致した(fluidsynth 2.5.5)。fluidsynthの公開APIにはブロック内の時刻を指定してイベントを
+  与える手段が無いため、本プラグイン側では解消できない。最初の描画より前の書き込みは
+  先頭から反映される。契約を緩めるか、この差を受け入れるかはFITOM_X側の判断待ち。
 - **実機検証は未実施**: 実際のSoundFontファイル・実オーディオデバイスを使った
   音声そのものの確認は未実施(スモークテストによるAPI呼び出しフロー・パース処理の
   疎通確認のみ。soundfontsは空配列でテストしている)。

@@ -81,4 +81,16 @@ if(BUILD_FITOMSF2IF_TEST)
     if(MSVC)
         target_compile_options(FitomSf2IF_test PRIVATE /utf-8)
     endif()
+
+    # 音声デバイスを使わないので CTest に登録する(スモークテストは実デバイスを鳴らすので登録しない)
+    enable_testing()
+    add_executable(FitomSf2IF_offline_render_test tests/offline_render_test.cpp)
+    target_include_directories(FitomSf2IF_offline_render_test PRIVATE
+        ${FITOM_SDK_INCLUDE_DIR}
+    )
+    target_link_libraries(FitomSf2IF_offline_render_test PRIVATE FitomSf2IF)
+    if(MSVC)
+        target_compile_options(FitomSf2IF_offline_render_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME offline_render COMMAND FitomSf2IF_offline_render_test)
 endif()
